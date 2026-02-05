@@ -17,6 +17,7 @@ Use `resources/list` to see available sequence files. Each resource has a short 
 
 Resources available in this module:
 - **pBR322**: Classic E. coli cloning vector, 4361bp circular plasmid, contains ampicillin and tetracycline resistance genes
+- **MG1655**: E. coli K-12 MG1655 complete genome, 4641652bp, NCBI accession U00096.3
 
 ## Tools
 

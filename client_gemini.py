@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -26,6 +27,24 @@ def _load_skill_context(modules_dir: Path) -> str:
     return "\n\n---\n\n".join(skill_texts)
 
 
+def _extract_tool_result_text(tool_result) -> str:
+    """Extract text from a FastMCP CallToolResult.
+
+    FastMCP's call_tool() returns a CallToolResult with a .content list
+    of TextContent objects, each having a .text attribute.
+    """
+    if hasattr(tool_result, "content") and tool_result.content:
+        texts = []
+        for item in tool_result.content:
+            text = getattr(item, "text", None)
+            if text is not None:
+                texts.append(text)
+        if texts:
+            return "\n".join(texts)
+    # Fallback: stringify the whole thing
+    return str(tool_result)
+
+
 def _strip_ctx_from_schema(schema: dict) -> dict:
     schema = dict(schema or {})
     props = dict(schema.get("properties", {}))
@@ -38,8 +57,8 @@ def _strip_ctx_from_schema(schema: dict) -> dict:
     return schema
 
 
-def _capabilities_to_system_content(mcp_tools, mcp_resources, skill_context: str = "") -> types.Content:
-    """Serialize MCP tools and resources into a system message for the LLM."""
+def _build_system_instruction(mcp_tools, mcp_resources, skill_context: str = "") -> str:
+    """Build a system instruction string from MCP capabilities."""
     tools_json = []
     for t in mcp_tools:
         tools_json.append({
@@ -79,10 +98,7 @@ def _capabilities_to_system_content(mcp_tools, mcp_resources, skill_context: str
     if skill_context:
         system_text += "\n\n--- SKILL GUIDANCE ---\n\n" + skill_context
 
-    return types.Content(
-        role="model",
-        parts=[types.Part.from_text(text=system_text)],
-    )
+    return system_text
 
 def _mcp_tool_to_function_declaration(tool: Any) -> types.FunctionDeclaration:
     """Convert a FastMCP tool definition into a Gemini FunctionDeclaration.
@@ -157,7 +173,7 @@ def _print_help() -> None:
         "  /prompt <name> [json_args]    Render a prompt and run it through Gemini\n"
         "\nExamples:\n"
         "  /resources\n"
-        "  /resource resource://crispr_example/protocol_overview\n"
+        "  /resource resource://seq_basics/pBR322\n"
         "  /prompts\n"
         "  /prompt spacer_design_workflow {\"target_sequence\": \"ACGT...\", \"pam\": \"NGG\", \"top_n\": 5}\n"
     )
@@ -172,11 +188,13 @@ async def run_chat() -> None:
     # Not as smart but get 1000 calls/day (same disclaimer) better for development 
     # model = "gemini-2.5-flash-lite"
 
-    # The client will pick up GEMINI_API_KEY (or GOOGLE_API_KEY) from a .env file.
-    # Create a (free) Gemini API key at https://ai.google.dev/gemini-api/docs/pricing?utm_source=chatgpt.com
-    # You must add these lines to a new .env file with your API key:
-    # GEMINI_API_KEY="YOUR_KEY_HERE"
-    gemini = genai.Client()
+    # Create a (free) Gemini API key at https://ai.google.dev/gemini-api/docs/pricing
+    # Set GEMINI_API_KEY or GOOGLE_API_KEY in your .env file or environment.
+    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        print("Error: Set GEMINI_API_KEY or GOOGLE_API_KEY in .env or environment.")
+        return
+    gemini = genai.Client(api_key=api_key)
 
     # Launch the MCP server as a subprocess over stdio.
     async with Client("server.py") as mcp:
@@ -184,7 +202,6 @@ async def run_chat() -> None:
         mcp_tools = await mcp.list_tools()
         fn_decls = [_mcp_tool_to_function_declaration(t) for t in mcp_tools]
         tool = types.Tool(function_declarations=fn_decls)
-        config = types.GenerateContentConfig(tools=[tool])
 
         # These are not used directly by Gemini function calling, but students need them.
         mcp_resources = await mcp.list_resources()
@@ -194,7 +211,11 @@ async def run_chat() -> None:
         modules_dir = Path(__file__).parent / "modules"
         skill_context = _load_skill_context(modules_dir)
 
-        system_capabilities_content = _capabilities_to_system_content(mcp_tools, mcp_resources, skill_context)
+        system_instruction = _build_system_instruction(mcp_tools, mcp_resources, skill_context)
+        config = types.GenerateContentConfig(
+            tools=[tool],
+            system_instruction=system_instruction,
+        )
 
         print("\nConnected to MCP server.")
         print("Discovered tools:")
@@ -295,7 +316,7 @@ async def run_chat() -> None:
                     # Send the rendered prompt messages to Gemini. Gemini may call tools.
                     response = gemini.models.generate_content(
                         model=model,
-                        contents=[system_capabilities_content, *prompt_contents],
+                        contents=prompt_contents,
                         config=config,
                     )
 
@@ -315,7 +336,7 @@ async def run_chat() -> None:
 
                     try:
                         tool_result = await mcp.call_tool(tool_name, tool_args)
-                        result_data = getattr(tool_result, "data", tool_result)
+                        result_data = _extract_tool_result_text(tool_result)
                         function_response = {"result": result_data}
                     except Exception as e:
                         function_response = {"error": str(e)}
@@ -328,12 +349,11 @@ async def run_chat() -> None:
                         name=tool_name,
                         response=function_response,
                     )
-                    function_response_content = types.Content(role="model", parts=[function_response_part])
+                    function_response_content = types.Content(role="user", parts=[function_response_part])
 
                     final = gemini.models.generate_content(
                         model=model,
                         contents=[
-                            system_capabilities_content,
                             *prompt_contents,
                             function_call_content,
                             function_response_content,
@@ -353,7 +373,7 @@ async def run_chat() -> None:
             )
             response = gemini.models.generate_content(
                 model=model,
-                contents=[system_capabilities_content, user_prompt_content],
+                contents=[user_prompt_content],
                 config=config,
             )
 
@@ -372,7 +392,7 @@ async def run_chat() -> None:
 
             try:
                 tool_result = await mcp.call_tool(tool_name, tool_args)
-                result_data = getattr(tool_result, "data", tool_result)
+                result_data = _extract_tool_result_text(tool_result)
                 function_response = {"result": result_data}
             except Exception as e:
                 function_response = {"error": str(e)}
@@ -385,12 +405,11 @@ async def run_chat() -> None:
                 name=tool_name,
                 response=function_response,
             )
-            function_response_content = types.Content(role="model", parts=[function_response_part])
+            function_response_content = types.Content(role="user", parts=[function_response_part])
 
             final = gemini.models.generate_content(
                 model=model,
                 contents=[
-                    system_capabilities_content,
                     user_prompt_content,
                     function_call_content,
                     function_response_content,

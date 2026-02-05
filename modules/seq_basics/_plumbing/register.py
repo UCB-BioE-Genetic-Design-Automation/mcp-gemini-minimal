@@ -170,10 +170,6 @@ def _register_resource(
     uri = f"resource://{module_name}/{resource_name}"
     description = meta.get("description", f"Sequence resource: {resource_name}")
 
-    @mcp.resource(uri)
+    @mcp.resource(uri, name=resource_name, description=description)
     def resource_reader() -> str:
         return data_file.read_text()
-
-    # Override the docstring for the resource
-    resource_reader.__doc__ = description
-    resource_reader.__name__ = resource_name
