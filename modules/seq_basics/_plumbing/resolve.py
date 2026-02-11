@@ -130,6 +130,9 @@ def _clean_sequence(seq: str) -> str:
     # Validate characters
     invalid = set(cleaned) - VALID_SEQUENCE_CHARS
     if invalid:
-        raise ValueError(f"Invalid sequence characters: {sorted(invalid)}")
+        raise ValueError(
+                        f"Invalid sequence characters detected: {sorted(invalid)}. "
+                        "Valid DNA/RNA/IUPAC characters are: ATUCGRSYKWMN."
+)
 
     return cleaned
