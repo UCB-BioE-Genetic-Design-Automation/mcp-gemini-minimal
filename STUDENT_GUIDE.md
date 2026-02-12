@@ -50,11 +50,11 @@ A **resource** is a file that tools can use.
 > - FASTA files (.fasta)
 
 Resources live in:
-modules/seq_basics/data/
+> modules/seq_basics/data/
 
 Each file automatically becomes available as a named resource.
 
-Example:
+> Example:
 pBR322.gb → resource name: "pBR322"
 
 ---
