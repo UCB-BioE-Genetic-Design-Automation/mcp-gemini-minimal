@@ -80,29 +80,28 @@ Your Python code does.
 ---
 
 # 4. Project Structure Overview
-    '''bash
+```bash
 server.py # Starts MCP server
 client_gemini.py # Gemini-based CLI client
-    '''
-
+```
+```bash
 modules/
-init.py
+    init.py
 
 seq_basics/
-SKILL.md
-_utils.py
-_plumbing/
-resources/
-data/
-tools/
-
+    SKILL.md
+    _utils.py
+    _plumbing/
+    resources/
+    data/
+    tools/
+```
 You mostly work inside:
-
+```bash
 modules/seq_basics/tools/
 modules/seq_basics/data/
+```
 
-yaml
-Copy code
 
 ---
 
@@ -114,23 +113,137 @@ Copy code
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-bash'''
+```
 
 
 ## Step 2 — Add Your Gemini API Key
 
 Create a file named .env in the project root:
-
+```bash
 GEMINI_API_KEY="your_key_here"
-
-Step 3 — Run the Client
+```
+##Step 3 — Run the Client
+```bash
 python client_gemini.py
-
+```
 
 Try:
-
+```bash
 Translate the first 60bp of pBR322 in frame 1
+```
+---
+# 6. Adding a New Tool (Most Important Skill)
 
+Create a new file inside:
+```bash
+modules/seq_basics/tools/
+```
 
+Example:
+```bash
+"""Compute GC content of a DNA sequence."""
+
+TOOL_META = {
+    "name": "dna_gc_content",
+    "description": "Compute GC content (fraction of G/C bases).",
+    "seq_param": "seq",
+}
+
+def gc_content(seq: str) -> float:
+    """Return GC fraction between 0 and 1."""
+    seq = seq.upper()
+    gc = sum(1 for b in seq if b in "GC")
+    return gc / len(seq) if seq else 0.0
+```
+
+Important Rules:
+
+- File name must match function name.
+- Include TOOL_META.
+- Use type hints.
+- Return JSON-serializable values (str, int, float, list, dict).
+
+Restart the server and your tool will appear automatically.
+---
+
+# 7. Adding New Sequence Files
+
+Add files into:
+```bash
+modules/seq_basics/data/
+```
+
+Restart the server. The file becomes a resource.
+
+---
+
+# 8. Tools With Multiple Sequences
+
+Example:
+```bash
+TOOL_META = {
+    "name": "dna_hamming_distance",
+    "description": "Count mismatches between two sequences.",
+    "seq_params": ["seq1", "seq2"],
+}
+
+def hamming_distance(seq1: str, seq2: str) -> int:
+    if len(seq1) != len(seq2):
+        raise ValueError("Sequences must have equal length")
+    return sum(a != b for a, b in zip(seq1, seq2))
+```
+
+Both parameters can be:
+- resource names
+- raw sequences
+---
+# 9. Non-Sequence Inputs
+
+Tools can take other types:
+```bash
+def find_pam_sites(seq: str, pam: str = "NGG", max_mismatch: int = 2) -> list[dict]:
+    ...
+```
+
+Guidelines:
+
+- Always validate inputs.
+- Raise ValueError with clear messages.
+- Return JSON-friendly data.
+---
+
+# 10. Creating a New Module
+
+If your project grows large, you may create:
+```bash
+modules/crispr/
+modules/cloning/
+modules/pathways/
+```
+
+Each module should contain:
+- tools/
+- resources/
+- data/
+- SKILL.md
+
+You may need to update "modules/__init__.py" to register new modules.
+---
+# 13. pytest Suite
+
+Run:
+```bash
+pytest -vv -l
+```
+---
+# 14. Troubleshooting
+- API Key Missing
+
+Create .env with:
+```bash
+GEMINI_API_KEY="..."
+```
+- Gemini 503 Error
+This means high demand. Retry later.
 
 
