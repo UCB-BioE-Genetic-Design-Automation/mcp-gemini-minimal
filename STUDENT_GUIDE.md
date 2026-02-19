@@ -19,6 +19,27 @@ You write **normal Python functions** that perform biology-related computations.
 
 > **The golden rule:** You write the biology logic. The framework connects it to the AI. The AI does *not* perform the biological computation; your Python code does. The AI simply interprets your results.
 
+# Design Philosophy of This Starter
+
+This project follows four key principles:
+
+1. Students write **pure Python functions**
+   - Your code focuses only on biology logic
+   - No networking, MCP, or API code required
+
+2. Convention over configuration
+   - The system auto-discovers tools based on filenames and structure
+   - If you follow the conventions, everything just works
+
+3. No plumbing in tool files
+   - You never import MCP or registration code in your tools
+   - The framework handles all wiring automatically
+
+4. Copy–modify–extend workflow
+   - New tools are created by copying an example and editing it
+   - You don’t need to understand the full framework to start building
+
+
 ---
 
 # 2. Core concepts
@@ -148,6 +169,15 @@ Translate the first 60bp of pBR322 in frame 1
 ---
 # 6. Adding a new tool 
 
+Your tool should behave like a normal Python function:
+- Takes inputs
+- Returns outputs
+- No file loading
+- No networking
+- No printing inside the function
+
+This makes your code easy to test with `pytest`, reusable outside MCP, and easier to debug and maintain.
+
 To add a new capability, create a new `.py` file inside `modules/seq_basics/tools/`.
 
 ***Example:*** Let's create `dna_gc_content.py`
@@ -170,9 +200,20 @@ def gc_content(seq: str) -> float:
     return gc / len(seq) if seq else 0.0
 ```
 
+When the server starts, it automatically:
+
+1. Scans `tools/` for Python files
+2. Registers each tool that defines `TOOL_META`
+3. Scans `data/` for sequence files
+4. Registers each file as a resource
+
+That’s why:
+- You don’t need to manually register tools
+- Restarting the server makes new tools appear automatically
+
 Important rules for tools:
 
-- The Python file name must match the function name (e.g., `gc_content.py` for `def gc_content`).
+- The Python file name must match the function name (e.g., `gc_content.py` for `def gc_content`). This rule allows the framework to auto-discover your tool.
 - You must include the `TOOL_META` dictionary.
 - Always use type hints (e.g., `seq: str`).
 - Return JSON-serializable values (str, int, float, list, dict).
@@ -197,6 +238,16 @@ def hamming_distance(seq1: str, seq2: str) -> int:
 ```
 
 *Note: Both* `seq1` *and* `seq2` *can be resource names (like "pBR322") or raw pasted sequences.*
+
+When you pass `seq="something"`, the framework automatically decides what it means:
+
+1. If the value matches a known resource name → load that file
+2. If the value starts with "LOCUS" → treat as GenBank content
+3. If the value starts with ">" → treat as FASTA content
+4. Otherwise → treat as a raw DNA/RNA string
+
+This means your tool always receives a clean sequence string. You never need to parse files manually inside your tool.
+
 ---
 # 8. Non-sequence inputs
 
