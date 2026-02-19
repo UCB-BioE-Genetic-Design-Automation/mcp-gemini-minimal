@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 from fastmcp import Client
 from google import genai
 from google.genai import types
+from google.genai import errors
+import time
 
 
 def _load_skill_context(modules_dir: Path) -> str:
@@ -173,10 +175,34 @@ async def run_chat() -> None:
     # model = "gemini-2.5-flash-lite"
 
     # The client will pick up GEMINI_API_KEY (or GOOGLE_API_KEY) from a .env file.
-    # Create a (free) Gemini API key at https://ai.google.dev/gemini-api/docs/pricing?utm_source=chatgpt.com
+    # Create a (free) Gemini API key at https://aistudio.google.com/api-keys
     # You must add these lines to a new .env file with your API key:
     # GEMINI_API_KEY="YOUR_KEY_HERE"
     gemini = genai.Client()
+
+    #
+    def safe_generate(*, model, contents, config, retries=3, backoff_seconds=2):
+        for attempt in range(retries):
+            try:
+                return gemini.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=config,
+                )
+            except errors.ServerError as e:
+                # STUDENT NOTE:
+                # The Gemini API sometimes returns 503 during spikes in demand.
+                # This is not your fault. We retry a few times with backoff.
+                msg = str(e)
+                if "503" in msg or "UNAVAILABLE" in msg:
+                    if attempt < retries - 1:
+                        wait = backoff_seconds * (2 ** attempt)
+                        print(f"\n[Gemini busy (503). Retrying in {wait}s...]")
+                        time.sleep(wait)
+                        continue
+                raise  # other server errors or final attempt
+
+    #____________________________
 
     # Launch the MCP server as a subprocess over stdio.
     async with Client("server.py") as mcp:
@@ -293,7 +319,7 @@ async def run_chat() -> None:
                         continue
 
                     # Send the rendered prompt messages to Gemini. Gemini may call tools.
-                    response = gemini.models.generate_content(
+                    response = safe_generate(
                         model=model,
                         contents=[system_capabilities_content, *prompt_contents],
                         config=config,
@@ -303,9 +329,176 @@ async def run_chat() -> None:
                     if not function_calls:
                         print(f"\nGemini: {response.text}\n")
                         continue
+                    #_________________I removed this whole block
+                    # Minimal: handle the first tool call only.############################
+                    # fc = function_calls[0]
+                    # tool_name = fc.name
+                    # tool_args = dict(fc.args or {})
 
-                    # Minimal: handle the first tool call only.
-                    fc = function_calls[0]
+                    # print(f"\nGemini chose tool: {tool_name}")
+                    # print("Args:")
+                    # print(json.dumps(tool_args, indent=2))
+
+                    # try:
+                    #     tool_result = await mcp.call_tool(tool_name, tool_args)
+                    #     result_data = getattr(tool_result, "data", tool_result)
+                    #     function_response = {"result": result_data}
+                    # except Exception as e:
+                    #     function_response = {"error": str(e)}
+
+                    # print("\nTool result:")
+                    # print(function_response)
+
+                    # function_call_content = response.candidates[0].content
+                    # function_response_part = types.Part.from_function_response(
+                    #     name=tool_name,
+                    #     response=function_response,
+                    # )
+                    # function_response_content = types.Content(role="model", parts=[function_response_part])
+
+                    # final = gemini.models.generate_content(
+                    #     model=model,
+                    #     contents=[
+                    #         system_capabilities_content,
+                    #         *prompt_contents,
+                    #         function_call_content,
+                    #         function_response_content,
+                    #     ],
+                    #     config=config,
+                    # )
+                    # print(f"\nGemini: {final.text}\n")
+                    # continue
+                    ###__________________
+
+
+                    # Instead:
+
+                    ### TOOL EXECUTION LOOP ###
+                    # Allow the model to call tools multiple times in sequence.
+                    # Loop until the model produces plain text output.
+
+                    contents = [system_capabilities_content, *prompt_contents]
+                    resp = response  # rename for clarity / consistency with the loop
+
+                    while True:
+                        function_calls = resp.function_calls or []
+                        if not function_calls:
+                            print(f"\nGemini: {resp.text}\n")
+                            break
+
+                        # Execute each tool call in order
+                        for fc in function_calls:
+                            tool_name = fc.name
+                            tool_args = dict(fc.args or {})
+
+                            print(f"\nGemini chose tool: {tool_name}")
+                            print("Args:")
+                            print(json.dumps(tool_args, indent=2))
+
+                            try:
+                                tool_result = await mcp.call_tool(tool_name, tool_args)
+                                result_data = getattr(tool_result, "data", tool_result)
+                                function_response = {"result": result_data}
+                            except Exception as e:
+                                function_response = {"error": str(e)}
+
+                            print("\nTool result:")
+                            print(function_response)
+
+                            # IMPORTANT: include the model's function-call message AND our function-response message
+                            function_call_content = resp.candidates[0].content
+                            function_response_part = types.Part.from_function_response(
+                                name=tool_name,
+                                response=function_response,
+                            )
+                            function_response_content = types.Content(role="model", parts=[function_response_part])
+
+                            contents.extend([function_call_content, function_response_content])
+
+                            # Ask Gemini again, now that it has the tool result
+                            resp = safe_generate(
+                                model=model,
+                                contents=contents,
+                                config=config,
+                            )
+
+                    continue
+
+
+
+                print("\nUnknown command. Type /help\n")
+                continue
+
+            # Normal free-form turn: ask Gemini what tool to call (if any)
+            user_prompt_content = types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=user_text)],
+            )
+            response = safe_generate(
+                model=model,
+                contents=[system_capabilities_content, user_prompt_content],
+                config=config,
+            )
+
+            function_calls = response.function_calls or []
+            if not function_calls:
+                print(f"\nGemini: {response.text}\n")
+                continue
+
+
+#same for this part:
+            # fc = function_calls[0]
+            # tool_name = fc.name
+            # tool_args = dict(fc.args or {})
+
+            # print(f"\nGemini chose tool: {tool_name}")
+            # print("Args:")
+            # print(json.dumps(tool_args, indent=2))
+
+            # try:
+            #     tool_result = await mcp.call_tool(tool_name, tool_args)
+            #     result_data = getattr(tool_result, "data", tool_result)
+            #     function_response = {"result": result_data}
+            # except Exception as e:
+            #     function_response = {"error": str(e)}
+
+            # print("\nTool result:")
+            # print(function_response)
+
+            # function_call_content = response.candidates[0].content
+            # function_response_part = types.Part.from_function_response(
+            #     name=tool_name,
+            #     response=function_response,
+            # )
+            # function_response_content = types.Content(role="model", parts=[function_response_part])
+
+            # final = gemini.models.generate_content(
+            #     model=model,
+            #     contents=[
+            #         system_capabilities_content,
+            #         user_prompt_content,
+            #         function_call_content,
+            #         function_response_content,
+            #     ],
+            #     config=config,
+            # )
+            # print(f"\nGemini: {final.text}\n")
+            
+            #_________________________
+            ### TOOL EXECUTION LOOP ###
+            # Allow the model to call tools multiple times in sequence.
+            # Loop until the model produces plain text output.
+
+            contents = [system_capabilities_content, user_prompt_content]
+            resp = response
+
+            while True:
+                function_calls = resp.function_calls or []
+                if not function_calls:
+                    print(f"\nGemini: {resp.text}\n")
+                    break
+
+                for fc in function_calls:
                     tool_name = fc.name
                     tool_args = dict(fc.args or {})
 
@@ -323,81 +516,20 @@ async def run_chat() -> None:
                     print("\nTool result:")
                     print(function_response)
 
-                    function_call_content = response.candidates[0].content
+                    function_call_content = resp.candidates[0].content
                     function_response_part = types.Part.from_function_response(
                         name=tool_name,
                         response=function_response,
                     )
                     function_response_content = types.Content(role="model", parts=[function_response_part])
 
-                    final = gemini.models.generate_content(
+                    contents.extend([function_call_content, function_response_content])
+
+                    resp = safe_generate(
                         model=model,
-                        contents=[
-                            system_capabilities_content,
-                            *prompt_contents,
-                            function_call_content,
-                            function_response_content,
-                        ],
+                        contents=contents,
                         config=config,
                     )
-                    print(f"\nGemini: {final.text}\n")
-                    continue
-
-                print("\nUnknown command. Type /help\n")
-                continue
-
-            # Normal free-form turn: ask Gemini what tool to call (if any)
-            user_prompt_content = types.Content(
-                role="user",
-                parts=[types.Part.from_text(text=user_text)],
-            )
-            response = gemini.models.generate_content(
-                model=model,
-                contents=[system_capabilities_content, user_prompt_content],
-                config=config,
-            )
-
-            function_calls = response.function_calls or []
-            if not function_calls:
-                print(f"\nGemini: {response.text}\n")
-                continue
-
-            fc = function_calls[0]
-            tool_name = fc.name
-            tool_args = dict(fc.args or {})
-
-            print(f"\nGemini chose tool: {tool_name}")
-            print("Args:")
-            print(json.dumps(tool_args, indent=2))
-
-            try:
-                tool_result = await mcp.call_tool(tool_name, tool_args)
-                result_data = getattr(tool_result, "data", tool_result)
-                function_response = {"result": result_data}
-            except Exception as e:
-                function_response = {"error": str(e)}
-
-            print("\nTool result:")
-            print(function_response)
-
-            function_call_content = response.candidates[0].content
-            function_response_part = types.Part.from_function_response(
-                name=tool_name,
-                response=function_response,
-            )
-            function_response_content = types.Content(role="model", parts=[function_response_part])
-
-            final = gemini.models.generate_content(
-                model=model,
-                contents=[
-                    system_capabilities_content,
-                    user_prompt_content,
-                    function_call_content,
-                    function_response_content,
-                ],
-                config=config,
-            )
-            print(f"\nGemini: {final.text}\n")
 
 
 if __name__ == "__main__":

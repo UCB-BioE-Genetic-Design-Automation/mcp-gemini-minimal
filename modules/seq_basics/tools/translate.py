@@ -21,6 +21,14 @@ def translate(seq: str, start: int = None, end: int = None, frame: int = 1) -> s
     Returns:
         Protein sequence as single-letter amino acids. Stop codons shown as '*'.
     """
+    ### Input validation ###
+    # These checks make error messages clearer for students.
+    if start is not None and start < 0:
+        raise ValueError("start must be >= 0")
+
+    if end is not None and end < 0:
+        raise ValueError("end must be >= 0")
+    
     if frame not in (1, 2, 3):
         raise ValueError(f"Frame must be 1, 2, or 3, got {frame}")
 

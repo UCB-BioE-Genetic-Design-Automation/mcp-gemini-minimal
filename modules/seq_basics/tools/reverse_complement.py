@@ -27,6 +27,8 @@ def reverse_complement(seq: str) -> str:
         Reverse complement of the input sequence.
     """
     try:
+        seq = seq.upper()   # Sequence should already be cleaned by resolve_to_seq,
+                            # but we defensively uppercase here for safety.
         return "".join(_COMPLEMENT[b] for b in reversed(seq))
     except KeyError as e:
         raise ValueError(f"Invalid base for complement: {e.args[0]}") from None
