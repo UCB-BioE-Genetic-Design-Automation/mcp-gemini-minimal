@@ -263,7 +263,8 @@ Guidelines:
 - Raise a `ValueError` with clear messages if the AI or user provides bad data.
 - Return JSON-friendly data.
 ---
-#9. Adding new sequence files
+# 9. Adding new sequence files
+
 Drop any `.gb` or `.fasta` files into `modules/seq_basics/data/`. Restart your terminal server, and the file instantly becomes a resource the AI can read.
 
 ---
