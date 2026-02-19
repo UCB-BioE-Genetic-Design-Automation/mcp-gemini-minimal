@@ -276,7 +276,9 @@ If your final project grows large, you can organize it by creating new module fo
 - `modules/cloning/`
 - `modules/pathways/`
 
+
 Each new module should contain its own `tools/`, `data/`, and a `SKILL.md` file to guide the AI (*Note: You may need to update* `modules/__init__.py` *to register new module folders*).
+
 ---
 # 11. Testing your code
 
