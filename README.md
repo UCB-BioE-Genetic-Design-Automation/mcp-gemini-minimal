@@ -418,7 +418,7 @@ You must submit a `prompts.json` file alongside your tool. Each entry is a natur
 
 ```
 modules/
-  my_crispr_module/
+  my_own_module/
     __init__.py        ← copy from seq_basics/ (can be empty)
     SKILL.md           ← describe what this module does for the AI
     data/
